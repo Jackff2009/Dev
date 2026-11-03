@@ -1,0 +1,718 @@
+-- language: Lua, file: VantaHub_v2.lua, target: Steal a Brainrot, executor: Delta Mobile
+-- FULL REBUILD — real remote names from scan, fixed steal, anti-hit, teleport, cash collect
+
+local RS   = game:GetService("ReplicatedStorage")
+local WS   = game:GetService("Workspace")
+local UIS  = game:GetService("UserInputService")
+local RUN  = game:GetService("RunService")
+local TS   = game:GetService("TweenService")
+local PL   = game:GetService("Players")
+local lp   = PL.LocalPlayer
+local cam  = WS.CurrentCamera
+
+-- ══════════════════════════════════════════
+--  REAL REMOTES (from scan)
+-- ══════════════════════════════════════════
+local NET = RS:WaitForChild("Packages"):WaitForChild("Net")
+
+local function getRemote(name)
+    return NET:WaitForChild("RE"):WaitForChild(name, 10)
+end
+
+local stealGrab    = getRemote("StealService/Grab")
+local cashCollect  = getRemote("PlotService/CashCollected")
+local claimCoins   = getRemote("PlotService/ClaimCoins")
+local plotSell     = getRemote("PlotService/Sell")
+local plotOpen     = getRemote("PlotService/Open")
+
+-- ══════════════════════════════════════════
+--  CHAR REFS
+-- ══════════════════════════════════════════
+local char, hrp, hum
+local function refreshChar()
+    char = lp.Character
+    if not char then return end
+    hrp  = char:WaitForChild("HumanoidRootPart", 5)
+    hum  = char:WaitForChild("Humanoid", 5)
+end
+refreshChar()
+lp.CharacterAdded:Connect(function(c)
+    char = c; task.wait(0.5); refreshChar()
+end)
+
+-- ══════════════════════════════════════════
+--  ANTI-DETECT
+-- ══════════════════════════════════════════
+pcall(function()
+    local mt = getrawmetatable(game)
+    local old = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        if getnamecallmethod() == "Kick" then return end
+        return old(self, ...)
+    end)
+    setreadonly(mt, true)
+end)
+
+-- ══════════════════════════════════════════
+--  ANTI-HIT — block damage touch on __HITBOX
+-- ══════════════════════════════════════════
+local antiHitConn
+local function startAntiHit()
+    if antiHitConn then antiHitConn:Disconnect() end
+    antiHitConn = RUN.Heartbeat:Connect(function()
+        if not char then return end
+        -- make our __HITBOX non-collidable so enemies can't register hits
+        local hitbox = WS:FindFirstChild(lp.Name) and WS[lp.Name]:FindFirstChild("__HITBOX")
+        if hitbox and hitbox:IsA("BasePart") then
+            hitbox.CanTouch = false
+            hitbox.CanCollide = false
+        end
+    end)
+end
+
+-- ══════════════════════════════════════════
+--  CONFIG
+-- ══════════════════════════════════════════
+local cfg = {
+    speed      = false, speedVal  = 30,
+    jump       = false, jumpVal   = 60,
+    noclip     = false,
+    fly        = false,
+    esp        = false, espDist   = true,
+    autoSteal  = false, stealRange= 50,
+    instaSteal = false,
+    autoCash   = false,
+    antiHit    = false,
+    antikick   = true,
+    teleportTo = nil,
+}
+
+-- ══════════════════════════════════════════
+--  GUI COLORS
+-- ══════════════════════════════════════════
+local BG   = Color3.fromRGB(9,  9, 15)
+local PAN  = Color3.fromRGB(16, 16, 26)
+local PANH = Color3.fromRGB(22, 20, 38)
+local ACC  = Color3.fromRGB(95, 55, 240)
+local ACC2 = Color3.fromRGB(155, 95, 255)
+local ON   = Color3.fromRGB(55, 215, 125)
+local OFF  = Color3.fromRGB(195, 50, 65)
+local TXT  = Color3.fromRGB(232, 225, 255)
+local DIM  = Color3.fromRGB(105, 95, 145)
+local WHT  = Color3.fromRGB(255,255,255)
+
+-- ══════════════════════════════════════════
+--  SCREEN GUI
+-- ══════════════════════════════════════════
+pcall(function()
+    local old = (gethui and gethui() or lp.PlayerGui):FindFirstChild("VantaV2")
+    if old then old:Destroy() end
+end)
+
+local sg = Instance.new("ScreenGui")
+sg.Name = "VantaV2"
+sg.ResetOnSpawn = false
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.IgnoreGuiInset = true
+sg.Parent = gethui and gethui() or lp.PlayerGui
+
+-- main window
+local win = Instance.new("Frame")
+win.Size = UDim2.new(0, 292, 0, 430)
+win.Position = UDim2.new(0, 16, 0, 72)
+win.BackgroundColor3 = BG
+win.BorderSizePixel = 0
+win.Active = true
+win.Draggable = true
+win.ClipsDescendants = true
+win.Parent = sg
+Instance.new("UICorner", win).CornerRadius = UDim.new(0, 11)
+local stroke = Instance.new("UIStroke", win)
+stroke.Color = ACC; stroke.Thickness = 1.1; stroke.Transparency = 0.45
+
+-- topbar
+local top = Instance.new("Frame")
+top.Size = UDim2.new(1, 0, 0, 42)
+top.BackgroundColor3 = PAN
+top.BorderSizePixel = 0
+top.ZIndex = 3
+top.Parent = win
+
+local titleL = Instance.new("TextLabel")
+titleL.Size = UDim2.new(1, -90, 1, 0)
+titleL.Position = UDim2.new(0, 13, 0, 0)
+titleL.BackgroundTransparency = 1
+titleL.Text = "⬡  VANTA HUB  v2"
+titleL.TextColor3 = TXT
+titleL.Font = Enum.Font.GothamBold
+titleL.TextSize = 13
+titleL.TextXAlignment = Enum.TextXAlignment.Left
+titleL.ZIndex = 4
+titleL.Parent = top
+
+-- minimize btn
+local minBtn = Instance.new("TextButton")
+minBtn.Size = UDim2.new(0, 30, 0, 26)
+minBtn.Position = UDim2.new(1, -68, 0.5, -13)
+minBtn.BackgroundColor3 = PANH
+minBtn.Text = "─"
+minBtn.TextColor3 = DIM
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 14
+minBtn.BorderSizePixel = 0
+minBtn.ZIndex = 5
+minBtn.Parent = top
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+
+-- close btn
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 0, 26)
+closeBtn.Position = UDim2.new(1, -35, 0.5, -13)
+closeBtn.BackgroundColor3 = Color3.fromRGB(175, 35, 55)
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = WHT
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 13
+closeBtn.BorderSizePixel = 0
+closeBtn.ZIndex = 5
+closeBtn.Parent = top
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+-- content + scroll
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, 0, 1, -42)
+content.Position = UDim2.new(0, 0, 0, 42)
+content.BackgroundTransparency = 1
+content.Parent = win
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, 0, 1, 0)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 3
+scroll.ScrollBarImageColor3 = ACC
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = content
+
+local ll = Instance.new("UIListLayout")
+ll.Padding = UDim.new(0, 5)
+ll.Parent = scroll
+local pad = Instance.new("UIPadding")
+pad.PaddingTop = UDim.new(0, 8)
+pad.PaddingLeft = UDim.new(0, 10)
+pad.PaddingRight = UDim.new(0, 10)
+pad.Parent = scroll
+
+-- ══════════════════════════════════════════
+--  MINIMIZE
+-- ══════════════════════════════════════════
+local minimized = false
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    if minimized then
+        content.Visible = false
+        TS:Create(win, TweenInfo.new(0.22, Enum.EasingStyle.Quart),
+            {Size = UDim2.new(0, 292, 0, 42)}):Play()
+        minBtn.Text = "□"
+    else
+        content.Visible = true
+        TS:Create(win, TweenInfo.new(0.22, Enum.EasingStyle.Quart),
+            {Size = UDim2.new(0, 292, 0, 430)}):Play()
+        minBtn.Text = "─"
+    end
+end)
+closeBtn.MouseButton1Click:Connect(function() win.Visible = false end)
+UIS.InputBegan:Connect(function(i, gp)
+    if gp then return end
+    if i.KeyCode == Enum.KeyCode.RightShift then
+        win.Visible = not win.Visible
+        if win.Visible and minimized then
+            minimized = false; content.Visible = true
+            win.Size = UDim2.new(0, 292, 0, 430); minBtn.Text = "─"
+        end
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  WIDGET BUILDERS
+-- ══════════════════════════════════════════
+local function mkSection(txt)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 20)
+    f.BackgroundTransparency = 1
+    f.Parent = scroll
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 1, 0)
+    l.BackgroundTransparency = 1
+    l.Text = "  " .. txt:upper()
+    l.TextColor3 = ACC2
+    l.Font = Enum.Font.GothamBold
+    l.TextSize = 10
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
+end
+
+local TI = TweenInfo.new(0.16, Enum.EasingStyle.Quad)
+
+local function mkToggle(label, key, cb)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 40)
+    row.BackgroundColor3 = PAN
+    row.BorderSizePixel = 0
+    row.Parent = scroll
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -58, 1, 0)
+    lbl.Position = UDim2.new(0, 12, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = TXT
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local pill = Instance.new("Frame")
+    pill.Size = UDim2.new(0, 42, 0, 22)
+    pill.Position = UDim2.new(1, -52, 0.5, -11)
+    pill.BackgroundColor3 = cfg[key] and ON or OFF
+    pill.BorderSizePixel = 0
+    pill.Parent = row
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 16, 0, 16)
+    knob.Position = cfg[key] and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)
+    knob.BackgroundColor3 = WHT
+    knob.BorderSizePixel = 0
+    knob.Parent = pill
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1,0,1,0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.Parent = row
+    btn.MouseButton1Click:Connect(function()
+        cfg[key] = not cfg[key]
+        local on = cfg[key]
+        TS:Create(pill, TI, {BackgroundColor3 = on and ON or OFF}):Play()
+        TS:Create(knob, TI, {Position = on and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8)}):Play()
+        if cb then cb(on) end
+    end)
+end
+
+local function mkSlider(label, key, mn, mx, cb)
+    local wrap = Instance.new("Frame")
+    wrap.Size = UDim2.new(1, 0, 0, 56)
+    wrap.BackgroundColor3 = PAN
+    wrap.BorderSizePixel = 0
+    wrap.Parent = scroll
+    Instance.new("UICorner", wrap).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1,-56,0,24)
+    lbl.Position = UDim2.new(0,12,0,6)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = TXT
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = wrap
+
+    local valL = Instance.new("TextLabel")
+    valL.Size = UDim2.new(0,48,0,24)
+    valL.Position = UDim2.new(1,-56,0,6)
+    valL.BackgroundTransparency = 1
+    valL.Text = tostring(cfg[key])
+    valL.TextColor3 = ACC2
+    valL.Font = Enum.Font.GothamBold
+    valL.TextSize = 13
+    valL.TextXAlignment = Enum.TextXAlignment.Right
+    valL.Parent = wrap
+
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1,-24,0,6)
+    track.Position = UDim2.new(0,12,0,40)
+    track.BackgroundColor3 = Color3.fromRGB(32,28,52)
+    track.BorderSizePixel = 0
+    track.Parent = wrap
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
+
+    local ratio = (cfg[key]-mn)/(mx-mn)
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(ratio,0,1,0)
+    fill.BackgroundColor3 = ACC
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
+
+    local handle = Instance.new("Frame")
+    handle.Size = UDim2.new(0,14,0,14)
+    handle.Position = UDim2.new(ratio,-7,0.5,-7)
+    handle.BackgroundColor3 = WHT
+    handle.BorderSizePixel = 0
+    handle.ZIndex = 3
+    handle.Parent = track
+    Instance.new("UICorner", handle).CornerRadius = UDim.new(1,0)
+
+    local hit = Instance.new("TextButton")
+    hit.Size = UDim2.new(1,0,0,28)
+    hit.Position = UDim2.new(0,0,0.5,-14)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.ZIndex = 4
+    hit.Parent = track
+
+    local drag = false
+    hit.MouseButton1Down:Connect(function() drag = true end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then drag = false end
+    end)
+    RUN.Heartbeat:Connect(function()
+        if not drag then return end
+        local mx2 = UIS:GetMouseLocation()
+        local abs = track.AbsolutePosition
+        local sz  = track.AbsoluteSize
+        local t   = math.clamp((mx2.X - abs.X)/sz.X, 0, 1)
+        local v   = math.round(mn + t*(mx-mn))
+        cfg[key]  = v
+        fill.Size = UDim2.new(t,0,1,0)
+        handle.Position = UDim2.new(t,-7,0.5,-7)
+        valL.Text = tostring(v)
+        if cb then cb(v) end
+    end)
+end
+
+local function mkButton(label, cb)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 36)
+    btn.BackgroundColor3 = ACC
+    btn.Text = label
+    btn.TextColor3 = WHT
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.BorderSizePixel = 0
+    btn.Parent = scroll
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    btn.MouseButton1Click:Connect(cb)
+end
+
+local function mkSpacer()
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1,0,0,4)
+    f.BackgroundTransparency = 1
+    f.Parent = scroll
+end
+
+-- ══════════════════════════════════════════
+--  MENU LAYOUT
+-- ══════════════════════════════════════════
+mkSection("▸ movement")
+mkToggle("⚡ Speed Hack", "speed", function(on)
+    if hum then hum.WalkSpeed = on and cfg.speedVal or 16 end
+end)
+mkSlider("   Speed", "speedVal", 16, 120, function(v)
+    if cfg.speed and hum then hum.WalkSpeed = v end
+end)
+mkToggle("🦘 Jump Boost", "jump", function(on)
+    if hum then hum.JumpPower = on and cfg.jumpVal or 50 end
+end)
+mkSlider("   Jump Power", "jumpVal", 50, 300, function(v)
+    if cfg.jump and hum then hum.JumpPower = v end
+end)
+mkToggle("👻 NoClip", "noclip", function() end)
+mkToggle("🛸 Fly", "fly", function(on)
+    if not on and hrp then
+        local bg = hrp:FindFirstChild("VantaBG")
+        local bv = hrp:FindFirstChild("VantaBV")
+        if bg then bg:Destroy() end
+        if bv then bv:Destroy() end
+    end
+end)
+
+mkSpacer()
+mkSection("▸ vision")
+mkToggle("👁 ESP Wallhack", "esp", function() end)
+mkToggle("   Distance Labels", "espDist", function() end)
+
+mkSpacer()
+mkSection("▸ steal  [real remote]")
+mkToggle("🔄 Auto Steal", "autoSteal", function() end)
+mkToggle("⚡ Instant Steal", "instaSteal", function() end)
+mkSlider("   Steal Range", "stealRange", 10, 200, function() end)
+mkToggle("💰 Auto Collect Cash", "autoCash", function() end)
+
+mkSpacer()
+mkSection("▸ teleport")
+mkButton("📍 Save Base Position", function()
+    if hrp then cfg.teleportTo = hrp.CFrame end
+end)
+mkButton("🚀 Teleport to Base", function()
+    if cfg.teleportTo and hrp then hrp.CFrame = cfg.teleportTo end
+end)
+-- teleport to each player's plot CashPad
+mkButton("💸 TP to Nearest CashPad", function()
+    if not hrp then return end
+    local best, bestDist = nil, math.huge
+    local plots = WS:FindFirstChild("Plots")
+    if plots then
+        for _, plot in ipairs(plots:GetChildren()) do
+            local cp = plot:FindFirstChild("CashPad")
+            if cp then
+                local root = cp:FindFirstChildOfClass("BasePart")
+                if root then
+                    local d = (root.Position - hrp.Position).Magnitude
+                    if d < bestDist then bestDist = d; best = root end
+                end
+            end
+        end
+    end
+    if best then hrp.CFrame = CFrame.new(best.Position + Vector3.new(0,4,0)) end
+end)
+
+mkSpacer()
+mkSection("▸ protection")
+mkToggle("🛡 Anti-Hit", "antiHit", function(on)
+    if on then startAntiHit() elseif antiHitConn then antiHitConn:Disconnect() end
+end)
+mkToggle("🔒 Anti-Kick", "antikick", function() end)
+
+mkSpacer()
+local hint = Instance.new("TextLabel")
+hint.Size = UDim2.new(1,0,0,20)
+hint.BackgroundTransparency = 1
+hint.Text = "RightShift = toggle  │  ─ = minimize"
+hint.TextColor3 = DIM
+hint.Font = Enum.Font.Gotham
+hint.TextSize = 10
+hint.Parent = scroll
+mkSpacer()
+
+-- ══════════════════════════════════════════
+--  RUNTIME — NOCLIP
+-- ══════════════════════════════════════════
+RUN.Stepped:Connect(function()
+    if not cfg.noclip or not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = false end
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  RUNTIME — FLY
+-- ══════════════════════════════════════════
+local flySpeed = 65
+RUN.Heartbeat:Connect(function()
+    if not cfg.fly or not hrp then return end
+    local bg = hrp:FindFirstChild("VantaBG") or Instance.new("BodyGyro")
+    bg.Name = "VantaBG"
+    bg.MaxTorque = Vector3.new(9e9,9e9,9e9)
+    bg.CFrame = cam.CFrame
+    bg.Parent = hrp
+    local bv = hrp:FindFirstChild("VantaBV") or Instance.new("BodyVelocity")
+    bv.Name = "VantaBV"
+    bv.MaxForce = Vector3.new(9e9,9e9,9e9)
+    local mv = Vector3.zero
+    if UIS:IsKeyDown(Enum.KeyCode.W) then mv += cam.CFrame.LookVector end
+    if UIS:IsKeyDown(Enum.KeyCode.S) then mv -= cam.CFrame.LookVector end
+    if UIS:IsKeyDown(Enum.KeyCode.A) then mv -= cam.CFrame.RightVector end
+    if UIS:IsKeyDown(Enum.KeyCode.D) then mv += cam.CFrame.RightVector end
+    if UIS:IsKeyDown(Enum.KeyCode.Space) then mv += Vector3.new(0,1,0) end
+    if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then mv -= Vector3.new(0,1,0) end
+    bv.Velocity = mv * flySpeed
+    bv.Parent = hrp
+end)
+
+-- ══════════════════════════════════════════
+--  RUNTIME — ESP
+-- ══════════════════════════════════════════
+local espObjs = {}
+
+local function clearESP()
+    for _, t in pairs(espObjs) do
+        if t.box  and t.box.Parent  then t.box:Destroy()  end
+        if t.bill and t.bill.Parent then t.bill:Destroy() end
+    end
+    espObjs = {}
+end
+
+local function buildESPFor(plr)
+    if plr == lp or espObjs[plr] then return end
+    local c = plr.Character
+    if not c then return end
+    local root = c:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local box = Instance.new("SelectionBox")
+    box.Color3 = Color3.fromRGB(130, 55, 255)
+    box.LineThickness = 0.045
+    box.SurfaceTransparency = 0.8
+    box.SurfaceColor3 = Color3.fromRGB(100, 35, 220)
+    box.Adornee = c
+    box.Parent = sg
+
+    local bill = Instance.new("BillboardGui")
+    bill.Size = UDim2.new(0,120,0,36)
+    bill.StudsOffset = Vector3.new(0,3.5,0)
+    bill.AlwaysOnTop = true
+    bill.Adornee = root
+    bill.Parent = sg
+
+    local nl = Instance.new("TextLabel")
+    nl.Size = UDim2.new(1,0,0.6,0)
+    nl.BackgroundTransparency = 1
+    nl.Text = plr.Name
+    nl.TextColor3 = Color3.fromRGB(195,155,255)
+    nl.Font = Enum.Font.GothamBold
+    nl.TextSize = 13
+    nl.TextStrokeTransparency = 0.3
+    nl.Parent = bill
+
+    local dl = Instance.new("TextLabel")
+    dl.Size = UDim2.new(1,0,0.4,0)
+    dl.Position = UDim2.new(0,0,0.6,0)
+    dl.BackgroundTransparency = 1
+    dl.Text = ""
+    dl.TextColor3 = Color3.fromRGB(80,230,160)
+    dl.Font = Enum.Font.Gotham
+    dl.TextSize = 10
+    dl.TextStrokeTransparency = 0.4
+    dl.Parent = bill
+
+    espObjs[plr] = {box=box, bill=bill, dist=dl, root=root}
+end
+
+RUN.Heartbeat:Connect(function()
+    if not cfg.esp then
+        if next(espObjs) then clearESP() end
+        return
+    end
+    for _, plr in ipairs(PL:GetPlayers()) do
+        if plr ~= lp then
+            local c = plr.Character
+            if c and c:FindFirstChild("HumanoidRootPart") then
+                buildESPFor(plr)
+                local t = espObjs[plr]
+                if t and hrp then
+                    local d = math.floor((t.root.Position-hrp.Position).Magnitude)
+                    t.dist.Text = cfg.espDist and (d.." studs") or ""
+                end
+            else
+                if espObjs[plr] then
+                    if espObjs[plr].box  then espObjs[plr].box:Destroy()  end
+                    if espObjs[plr].bill then espObjs[plr].bill:Destroy() end
+                    espObjs[plr] = nil
+                end
+            end
+        end
+    end
+    for plr in pairs(espObjs) do
+        if not plr.Parent then
+            espObjs[plr].box:Destroy(); espObjs[plr].bill:Destroy()
+            espObjs[plr] = nil
+        end
+    end
+end)
+PL.PlayerRemoving:Connect(function(plr)
+    if espObjs[plr] then
+        espObjs[plr].box:Destroy(); espObjs[plr].bill:Destroy()
+        espObjs[plr] = nil
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  RUNTIME — STEAL (fires StealService/Grab)
+-- ══════════════════════════════════════════
+local stealCD = {}
+RUN.Heartbeat:Connect(function()
+    if not (cfg.autoSteal or cfg.instaSteal) then return end
+    if not hrp or not stealGrab then return end
+    local now = tick()
+
+    for _, plr in ipairs(PL:GetPlayers()) do
+        if plr == lp then continue end
+        local tc = plr.Character
+        if not tc then continue end
+        local tRoot = tc:FindFirstChild("HumanoidRootPart")
+        if not tRoot then continue end
+        local dist = (tRoot.Position - hrp.Position).Magnitude
+        if dist > cfg.stealRange then continue end
+        if stealCD[plr] and (now - stealCD[plr]) < 1.0 then continue end
+        stealCD[plr] = now
+
+        if cfg.instaSteal then
+            hrp.CFrame = tRoot.CFrame * CFrame.new(0, 0, -2.4)
+            task.wait(0.04)
+        end
+
+        -- fire the REAL steal remote with player as target
+        pcall(function()
+            stealGrab:FireServer(plr)
+        end)
+        -- also try firing with character
+        pcall(function()
+            stealGrab:FireServer(plr.Character)
+        end)
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  RUNTIME — AUTO COLLECT CASH
+--  targets CashPad parts in Workspace.Plots
+-- ══════════════════════════════════════════
+local cashCD = 0
+RUN.Heartbeat:Connect(function()
+    if not cfg.autoCash or not hrp then return end
+    local now = tick()
+    if now - cashCD < 0.5 then return end
+    cashCD = now
+
+    local plots = WS:FindFirstChild("Plots")
+    if not plots then return end
+
+    for _, plot in ipairs(plots:GetChildren()) do
+        -- collect from CashPad
+        local cashPad = plot:FindFirstChild("CashPad")
+        if cashPad then
+            local root = cashPad:FindFirstChildOfClass("BasePart")
+            if root then
+                local d = (root.Position - hrp.Position).Magnitude
+                if d < 180 then
+                    pcall(function() claimCoins:FireServer() end)
+                    pcall(function() plotSell:FireServer()   end)
+                end
+            end
+        end
+    end
+    -- collect dropped cash (FastOverheadTemplate in Debris)
+    local debris = WS:FindFirstChild("Debris")
+    if debris then
+        for _, obj in ipairs(debris:GetChildren()) do
+            local root = obj:FindFirstChildOfClass("BasePart")
+            if root then
+                local d = (root.Position - hrp.Position).Magnitude
+                if d < 60 then
+                    hrp.CFrame = CFrame.new(root.Position + Vector3.new(0,3,0))
+                end
+            end
+        end
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  RESPAWN SYNC
+-- ══════════════════════════════════════════
+lp.CharacterAdded:Connect(function(c)
+    char = c; task.wait(0.5); refreshChar()
+    if cfg.speed and hum then hum.WalkSpeed = cfg.speedVal end
+    if cfg.jump  and hum then hum.JumpPower = cfg.jumpVal  end
+    if cfg.antiHit then startAntiHit() end
+end)
+
+print("[VantaHub v2] loaded ✓ — RightShift toggle | ─ minimize")
